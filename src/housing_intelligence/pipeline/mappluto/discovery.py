@@ -4,9 +4,9 @@ import json
 import re
 import time
 from dataclasses import asdict, dataclass
-from html.parser import HTMLParser
 from urllib.parse import unquote, urlencode, urljoin, urlsplit
 import requests
+from bs4 import BeautifulSoup
 
 from ...config import Settings
 
@@ -110,95 +110,49 @@ class OfficialHTTP:
         return result
 
 
-class PublicationParser(HTMLParser):
-    """Small HTML tree retaining the official release and table boundaries."""
-
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.root = {"tag": "root", "attrs": {}, "children": []}
-        self.stack = [self.root]
-
-    def handle_starttag(self, tag, attrs):
-        node = {"tag": tag, "attrs": dict(attrs), "children": []}
-        self.stack[-1]["children"].append(node)
-        if tag not in {"br", "hr", "img", "input", "meta", "link", "source", "wbr"}:
-            self.stack.append(node)
-
-    def handle_startendtag(self, tag, attrs):
-        self.handle_starttag(tag, attrs)
-        if self.stack[-1]["tag"] == tag:
-            self.stack.pop()
-
-    def handle_endtag(self, tag):
-        for index in range(len(self.stack) - 1, 0, -1):
-            if self.stack[index]["tag"] == tag:
-                del self.stack[index:]
-                break
-
-    def handle_data(self, data):
-        self.stack[-1]["children"].append(data)
-
-
-def nodes(node):
-    yield node
-    for child in node["children"]:
-        if isinstance(child, dict):
-            yield from nodes(child)
-
-
-def node_text(node):
-    return " ".join(
-        node_text(child) if isinstance(child, dict) else child
-        for child in node["children"]
-    )
-
-
 def publication_archive(description: str, version: str) -> str:
-    parser = PublicationParser()
-    parser.feed(description)
-    sections = [
-        node
-        for node in nodes(parser.root)
-        if node["attrs"].get("id") == "recent-release"
-    ]
+    soup = BeautifulSoup(description, "html.parser")
+    sections = soup.find_all(id="recent-release")
     if len(sections) != 1:
         raise ValueError("Expected one official recent-release section")
     section = sections[0]
     declared = set(
         re.findall(
-            r"latest\s+release\s*:\s*" + RELEASE.pattern, node_text(section), re.I
+            r"latest\s+release\s*:\s*" + RELEASE.pattern, section.get_text(" "), re.I
         )
     )
     if {item.lower() for item in declared} != {version}:
         raise ValueError(
             "Latest publication and ArcGIS release disagree or are ambiguous"
         )
-    map_sections = [
-        node for node in nodes(section) if node["attrs"].get("id") == "mappluto"
-    ]
+    map_sections = section.find_all(id="mappluto")
     if len(map_sections) != 1:
         raise ValueError("Expected one MapPLUTO subsection")
     matches = []
-    for table in [node for node in nodes(map_sections[0]) if node["tag"] == "table"]:
+    for table in map_sections[0].find_all("table"):
         selected = False
-        for row in [node for node in nodes(table) if node["tag"] == "tr"]:
-            headings = [node for node in nodes(row) if node["tag"] == "th"]
+        for row in table.find_all("tr"):
+            headings = row.find_all("th")
             if headings:
-                label = re.sub(r"\s+", " ", " ".join(map(node_text, headings))).strip()
+                label = re.sub(
+                    r"\s+", " ", " ".join(heading.get_text(" ") for heading in headings)
+                ).strip()
                 selected = (
                     label.replace("?", "-").replace("?", "-").casefold()
                     == "mappluto - shoreline clipped (fgdb)"
                 )
             if selected:
-                for anchor in [node for node in nodes(row) if node["tag"] == "a"]:
+                for anchor in row.find_all("a"):
                     if (
-                        re.sub(r"\s+", " ", node_text(anchor)).strip().casefold()
+                        re.sub(r"\s+", " ", anchor.get_text(" ")).strip().casefold()
                         == "download files"
                     ):
-                        matches.append(anchor["attrs"].get("href", ""))
+                        matches.append(anchor.get("href", ""))
     if len(matches) != 1:
         raise ValueError("Expected exactly one shoreline-clipped FileGDB download")
     href = matches[0]
+    if not isinstance(href, str):
+        raise ValueError("Expected an official DCP ZIP path")
     approved_url(href, archive=True)
     named = RELEASE.findall(urlsplit(href).path.replace("_", " "))
     if named and any(item.lower() != version for item in named):

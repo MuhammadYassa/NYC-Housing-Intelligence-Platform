@@ -226,7 +226,8 @@ The next work is organized as small, independently testable features rather than
 
 ### Phase 2 — Multi-source housing data ⏳
 
-- [ ] Ingest HPD violations and complaints using validated incremental loads- [ ] Add DOB permit/activity data and relevant 311 complaints
+- [ ] Ingest HPD violations and complaints using validated incremental loads
+- [ ] Add DOB permit/activity data and relevant 311 complaints
 - [ ] Incorporate DOF property/tax data and ACS neighborhood context
 - [ ] Build a reliable address ↔ **BBL/BIN** resolver across agency datasets
 - [ ] Preserve dataset freshness, provenance, and historical reporting context

@@ -124,6 +124,71 @@ def test_discovery_exact_metadata(monkeypatch, metadata):
 
 
 @pytest.mark.parametrize(
+    "section,message",
+    [
+        ("recent-release", "Expected one official recent-release section"),
+        ("mappluto", "Expected one MapPLUTO subsection"),
+    ],
+)
+def test_publication_rejects_duplicate_sections(section, message):
+    description = json.loads(FIXTURE.read_bytes())["description"]
+    description = description.replace(
+        f'id="{section}">', f'id="{section}"><div id="{section}"></div>'
+    )
+    with pytest.raises(ValueError, match=message):
+        publication_archive(description, "26v2")
+
+
+@pytest.mark.parametrize(
+    "original,replacement",
+    [
+        ("Latest Release: 26v2", "<b>Latest</b>&nbsp;Release:\n<span>26v2</span>"),
+        (
+            "MapPLUTO - Shoreline Clipped (fgdb)",
+            "<b>MapPLUTO</b>&nbsp;-\nShoreline <span>Clipped</span> (fgdb)",
+        ),
+        ("Download Files", "<span>Download</span>&nbsp;\n<b>Files</b>"),
+    ],
+)
+def test_publication_normalizes_nested_text_and_entities(original, replacement):
+    description = json.loads(FIXTURE.read_bytes())["description"]
+    assert publication_archive(description.replace(original, replacement), "26v2") == URL
+
+
+def test_publication_selection_resets_at_headings_and_tables():
+    description = f"""
+        <div id="recent-release">
+          <p>Latest Release: 26v2</p>
+          <div id="mappluto">
+            <table>
+              <tr><th>MapPLUTO - Water Included (fgdb)</th></tr>
+              <tr><td><a href="https://mirror.example/a.zip">Download Files</a></td></tr>
+            </table>
+            <table>
+              <tr><th>MapPLUTO - Shoreline Clipped (fgdb)</th></tr>
+              <tr><td><a href="{URL}">Download Files</a></td></tr>
+              <tr><th>MapPLUTO - Shoreline Clipped (shp)</th></tr>
+              <tr><td><a href="https://mirror.example/b.zip">Download Files</a></td></tr>
+              <tr><th>MapPLUTO - Shoreline Clipped (fgdb)</th></tr>
+            </table>
+            <table>
+              <tr><td><a href="https://mirror.example/c.zip">Download Files</a></td></tr>
+            </table>
+          </div>
+        </div>
+    """
+    assert publication_archive(description, "26v2") == URL
+
+
+@pytest.mark.parametrize("attribute", ["", 'href=""', "href"])
+def test_publication_rejects_missing_or_empty_download_url(attribute):
+    description = json.loads(FIXTURE.read_bytes())["description"]
+    description = description.replace(f'href="{URL}"', attribute)
+    with pytest.raises(ValueError):
+        publication_archive(description, "26v2")
+
+
+@pytest.mark.parametrize(
     "index,value",
     [
         (0, {}),
