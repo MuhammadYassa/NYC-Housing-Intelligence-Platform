@@ -2,6 +2,7 @@ import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 from zipfile import ZipFile
+from .errors import MissingGeodatabase
 
 
 def read_in_chunks(path: Path, chunk_size: int) -> Iterator[bytes]:
@@ -65,7 +66,7 @@ def extract_mappluto(
 
     # Require one source geodatabase so the next stage has an unambiguous input.
     if len(gdb_list) < 1:
-        raise FileNotFoundError("GeoSpatial Database File Not Found!")
+        raise MissingGeodatabase("GeoSpatial Database File Not Found!")
     elif len(gdb_list) > 1:
         raise ValueError("Multiple GeoSpatial Database Files Found")
 

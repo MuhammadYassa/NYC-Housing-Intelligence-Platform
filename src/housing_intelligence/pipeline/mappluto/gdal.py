@@ -1,6 +1,8 @@
 """Inspect the MapPLUTO geodatabase and load its source layer into staging."""
 
 import json
+import logging
+import re
 import os
 import subprocess
 from pathlib import Path
@@ -8,6 +10,7 @@ from pathlib import Path
 from ...config import Settings
 from ...database import gdal_connection
 from .source import SourceContract
+from .errors import OperationalError
 
 
 def gdal_environment(settings: Settings) -> dict[str, str]:
@@ -35,22 +38,32 @@ def _run_command(
             env=env,
             timeout=timeout,
         )
+        logging.getLogger(__name__).debug("GDAL diagnostics: %s", result.stderr)
+        # Some GDAL versions return zero after a failed destination Open() and
+        # an attempted Create() fallback. An error diagnostic is never success.
+        if re.search(r"^ERROR\s+\d+:", result.stderr or "", re.MULTILINE):
+            raise OperationalError(f"GDAL reported an error: {result.stderr}")
         return result.stdout
     except subprocess.TimeoutExpired as e:
-        raise RuntimeError(f"GDAL command exceeded {timeout} seconds") from e
+        raise OperationalError(f"GDAL command exceeded {timeout} seconds") from e
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
+        raise OperationalError(
             f"Command {e.cmd} failed with exit code {e.returncode}.\n"
             f"GDAL error: {e.stderr}"
+        ) from e
+    except OSError as e:
+        raise OperationalError(
+            f"GDAL executable unavailable: {type(e).__name__}"
         ) from e
 
 
 def inspect_mappluto(
-    gdb_path: Path, contract: SourceContract, settings: Settings
+    gdb_path: Path, contract: SourceContract | None, settings: Settings
 ) -> dict:
     """Read layer information as JSON without modifying the source geodatabase."""
     ogrinfo_output = _run_command(
-        [settings.ogrinfo_executable, "-json", "-ro", str(gdb_path), contract.layer],
+        [settings.ogrinfo_executable, "-json", "-ro", "-so", str(gdb_path)]
+        + ([contract.layer] if contract else ["-al"]),
         env=gdal_environment(settings),
         timeout=settings.gdal_inspect_timeout_seconds,
     )
@@ -71,12 +84,19 @@ def load_to_staging(
 
     # Keep the password out of command arguments, which can appear in errors.
     env["PGPASSWORD"] = settings.database_password.get_secret_value()
+    env["PGAPPNAME"] = "mappluto-gdal"
+    env["PGOPTIONS"] = (
+        env.get("PGOPTIONS", "")
+        + f" -c statement_timeout={settings.database_statement_timeout_seconds * 1000}"
+    )
 
     _run_command(
         [
             settings.ogr2ogr_executable,
             "-f",
             "PostgreSQL",
+            # Open the existing database.
+            "-update",
             gdal_pg_connection_string,
             str(gdb_path),
             contract.layer,

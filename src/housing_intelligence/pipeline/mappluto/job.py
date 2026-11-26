@@ -4,11 +4,13 @@ import argparse
 import json
 import logging
 import tempfile
-from contextlib import contextmanager
+import shutil
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import psycopg
+from psycopg.pq import TransactionStatus
 
 from ...config import Settings
 from ...database import connect
@@ -20,9 +22,16 @@ from ..import_runs import (
     record_import_progress,
     update_import_status,
 )
-from .bronze import calculate_sha256, extract_mappluto, verify_bronze_artifact
+from .bronze import calculate_sha256, extract_mappluto
 from .gdal import inspect_mappluto, load_to_staging
-from .source import SourceContract, contract_for_release, validate_inspection
+from .errors import OperationalError
+from .quality import QualityError, borough_counts, check_snapshot
+from .source import (
+    SourceContract,
+    contract_for_release,
+    validate_inspection,
+    runtime_contract,
+)
 from .transform import merge_tax_lots
 from .validation import ValidationError, validate_staging
 
@@ -68,50 +77,122 @@ class MapplutoRunError(RuntimeError):
         super().__init__(f"MapPLUTO run {run_id} failed: {message}")
 
 
+def recover_interrupted(conn):
+    """Caller must own the MapPLUTO advisory lock."""
+    conn.execute(
+        """UPDATE etl.import_runs SET status='FAILED', completed_at=clock_timestamp(),
+           error_message='Interrupted run recovered by the next MapPLUTO owner',
+           inserted_count=0, updated_count=0, unchanged_count=0
+           WHERE dataset_name='MapPLUTO'
+             AND status NOT IN ('COMPLETED','FAILED')""",
+    )
+
+    pending = conn.execute(
+        "SELECT id FROM etl.import_runs WHERE dataset_name='MapPLUTO' "
+        "AND staging_recovery_required ORDER BY id"
+    ).fetchall()
+    if pending:
+        raise RuntimeError(
+            f"Uncertain GDAL termination for runs {[r[0] for r in pending]}; "
+            "confirm processes and database sessions have stopped before clearing the flag"
+        )
+
+
+def load_staging_for_run(conn, run_id, gdb, contract, settings):
+    """Persist uncertainty before spawning; only known subprocess outcomes clear it."""
+    conn.execute(
+        "UPDATE etl.import_runs SET staging_recovery_required=true WHERE id=%s",
+        (run_id,),
+    )
+    error = None
+    try:
+        load_to_staging(gdb, contract, settings)
+    except OperationalError as load_error:
+        # _run_command returns this only after subprocess exit, failure to start,
+        # or a timeout whose child subprocess.run has killed and reaped.
+        error = load_error
+    # A dead client can leave an SQL command running on the server. Do not let
+    # another staging load proceed while a known MapPLUTO session still exists.
+    active = conn.execute(
+        """SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+           WHERE datname=current_database() AND usename=current_user
+           AND application_name='mappluto-gdal' AND pid<>pg_backend_pid())"""
+    ).fetchone()[0]
+    if active:
+        raise RuntimeError(
+            "GDAL exited but its database session remains; inspect it before clearing the flag"
+        ) from error
+    conn.execute(
+        "UPDATE etl.import_runs SET staging_recovery_required=false WHERE id=%s",
+        (run_id,),
+    )
+    if error is not None:
+        raise error
+
+
 def run_mappluto(
     archive: Path,
-    contract: SourceContract,
+    contract: SourceContract | str,
     expected_sha256: str,
     *,
     settings: Settings | None = None,
     work_root: Path = Path("data/working/mappluto"),
+    connection: psycopg.Connection | None = None,
+    source_metadata: dict | None = None,
 ) -> RunResult:
     settings = settings or Settings()
     archive = archive.resolve()
-    with connect(settings) as conn, mappluto_lock(conn):
-        # A prior process may have been killed without reaching its handler.
-        # With the lock acquired, its nonterminal run cannot be active. Atomic
-        # merge/completion means none of those runs committed canonical changes.
-        conn.execute(
-            """UPDATE etl.import_runs SET status='FAILED', completed_at=clock_timestamp(),
-               error_message='Interrupted run recovered by the next MapPLUTO owner',
-               inserted_count=0, updated_count=0, unchanged_count=0
-               WHERE dataset_name='MapPLUTO' AND pipeline_version=%s
-                 AND status NOT IN ('COMPLETED','FAILED')""",
-            (PIPELINE_VERSION,),
+    if connection is not None and (
+        not connection.autocommit
+        or connection.info.transaction_status != TransactionStatus.IDLE
+    ):
+        raise ValueError("Injected MapPLUTO connection must be idle and autocommit")
+    if connection is not None and connection.info.dbname != settings.database_name:
+        raise ValueError(
+            "Injected MapPLUTO connection must use the configured database"
         )
-        # Each statement outside transaction() is durable before external work.
-        run_id = create_import_run(
-            conn, "MapPLUTO", PIPELINE_VERSION, contract.release, archive, None
-        )
+    # Automation can keep discovery ownership and staging ownership on the
+    # same session. Manual imports continue to create/own their connection.
+    with (
+        (
+            nullcontext(connection) if connection is not None else connect(settings)
+        ) as conn,
+        mappluto_lock(conn),
+    ):
+        recover_interrupted(conn)
+        with conn.transaction():
+            run_id = create_import_run(
+                conn,
+                "MapPLUTO",
+                PIPELINE_VERSION,
+                contract if isinstance(contract, str) else contract.release,
+                archive,
+                None,
+            )
+            if source_metadata is not None:
+                record_import_progress(conn, run_id, source_metadata=source_metadata)
         phase = "artifact"
         validation = None
+        workspace = None
         try:
             LOGGER.info("MapPLUTO run %s started", run_id)
             checksum = calculate_sha256(archive)
             record_import_progress(conn, run_id, checksum_sha256=checksum)
-            verify_bronze_artifact(archive, expected_sha256)
+            if checksum != expected_sha256.upper():
+                raise ValueError("SHA256 Hash do not match!")
             work_root = work_root.resolve()
             work_root.mkdir(parents=True, exist_ok=True)
             workspace = Path(tempfile.mkdtemp(prefix=f"run-{run_id}-", dir=work_root))
             LOGGER.info("Run workspace: %s", workspace)
             gdb = extract_mappluto(archive, workspace / "extracted")
-            # Detect replacement/modification between verification and extraction.
-            verify_bronze_artifact(archive, expected_sha256)
             update_import_status(conn, run_id, ImportRunStatus.EXTRACTED)
 
             phase = "inspection"
-            inspection = inspect_mappluto(gdb, contract, settings)
+            inspection = inspect_mappluto(
+                gdb, None if isinstance(contract, str) else contract, settings
+            )
+            if isinstance(contract, str):
+                contract = runtime_contract(contract, inspection)
             inspected_layers = [
                 layer
                 for layer in inspection.get("layers", [])
@@ -124,10 +205,13 @@ def run_mappluto(
             source_count = validate_inspection(inspection, contract)
 
             phase = "staging"
-            load_to_staging(gdb, contract, settings)
-            staged_count = conn.execute(
+            load_staging_for_run(conn, run_id, gdb, contract, settings)
+            staged_row = conn.execute(
                 "SELECT count(*) FROM staging.mappluto_source"
-            ).fetchone()[0]
+            ).fetchone()
+            if staged_row is None:
+                raise RuntimeError("Could not measure staging row count")
+            staged_count = staged_row[0]
             record_import_progress(conn, run_id, staged_row_count=staged_count)
             update_import_status(conn, run_id, ImportRunStatus.STAGED)
 
@@ -140,6 +224,24 @@ def run_mappluto(
                 validation = validate_staging(conn, contract, source_count)
                 if validation.rejected or validation.summary.get("completeness"):
                     raise ValidationError(validation)
+                boroughs = borough_counts(conn)
+                validation.summary["snapshot"] = {
+                    "feature_count": validation.valid,
+                    "borough_counts": boroughs,
+                }
+                if source_metadata is not None:
+                    phase = "quality gate"
+                    try:
+                        summary, _ = check_snapshot(
+                            conn,
+                            validation.valid,
+                            settings,
+                            source_metadata["arcgis_count"],
+                        )
+                    except QualityError as error:
+                        validation.summary["quality"] = error.summary
+                        raise
+                    validation.summary["quality"] = summary
                 record_import_progress(
                     conn,
                     run_id,
@@ -163,34 +265,33 @@ def run_mappluto(
             # transaction() rolled back first. Store diagnostics independently.
             message = f"{phase}: {type(error).__name__}: {error}"
             try:
-                with connect(settings) as failure_conn:
-                    outcome = failure_conn.execute(
-                        "SELECT status, inserted_count, updated_count, unchanged_count FROM etl.import_runs WHERE id=%s",
-                        (run_id,),
-                    ).fetchone()
-                    if outcome and outcome[0] == "COMPLETED":
-                        # A COMMIT acknowledgement can be lost while the commit
-                        # itself succeeds. Trust the atomically committed outcome.
-                        return RunResult(run_id, *outcome[1:])
-                    if isinstance(error, ValidationError):
-                        validation = error.result
-                    with failure_conn.transaction():
-                        if validation is not None:
-                            record_import_progress(
-                                failure_conn,
-                                run_id,
-                                staged_row_count=validation.received,
-                                valid_count=validation.valid,
-                                rejected_count=validation.rejected,
-                                validation_summary=validation.summary,
-                            )
-                        fail_import_run(failure_conn, run_id, message)
+                if isinstance(error, ValidationError):
+                    validation = error.result
+                with conn.transaction():
+                    if validation is not None:
+                        record_import_progress(
+                            conn,
+                            run_id,
+                            staged_row_count=validation.received,
+                            valid_count=validation.valid,
+                            rejected_count=validation.rejected,
+                            validation_summary=validation.summary,
+                        )
+                    fail_import_run(conn, run_id, message)
             except Exception:
                 LOGGER.exception(
                     "Could not persist outcome for run %s; inspect/reconcile it before retry",
                     run_id,
                 )
             raise MapplutoRunError(run_id, message) from error
+        finally:
+            if workspace is not None:
+                try:
+                    shutil.rmtree(workspace)
+                except OSError:
+                    LOGGER.warning(
+                        "Could not clean workspace %s", workspace, exc_info=True
+                    )
 
 
 def main() -> int:

@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     gdal_load_timeout_seconds: int = Field(default=3600, gt=0)
     database_statement_timeout_seconds: int = Field(default=1800, gt=0)
 
+    mappluto_http_timeout_seconds: int = Field(default=60, gt=0, le=300)
+    mappluto_max_archive_bytes: int = Field(default=2_000_000_000, gt=0)
+    mappluto_max_expanded_bytes: int = Field(default=8_000_000_000, gt=0)
+    # No implicit anomaly policy: the operator must explicitly configure these.
+    mappluto_max_total_change: float | None = Field(default=None, ge=0, lt=1)
+    mappluto_max_borough_change: float | None = Field(default=None, ge=0, lt=1)
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

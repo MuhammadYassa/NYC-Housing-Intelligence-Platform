@@ -3,13 +3,14 @@
 Revision ID: b3a3a5836b80
 Revises:
 Create Date: 2026-07-30 18:28:20.037355
+
 """
 
 from typing import Sequence, Union
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from alembic import op
-
 
 # Revision identifiers used by Alembic.
 revision: str = "b3a3a5836b80"
@@ -23,13 +24,9 @@ def upgrade() -> None:
     # conditional.
     op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
 
-    # These schemas are owned by this migration. An unexpected pre-existing
-    # schema should cause the migration to fail instead of hiding database drift.
     op.execute("CREATE SCHEMA etl")
     op.execute("CREATE SCHEMA staging")
-    op.execute("CREATE SCHEMA bronze")
     op.execute("CREATE SCHEMA silver")
-    op.execute("CREATE SCHEMA gold")
 
     op.create_table(
         "import_runs",
@@ -116,8 +113,25 @@ def upgrade() -> None:
             sa.Text(),
             nullable=True,
         ),
-
+        sa.Column("valid_count", sa.BigInteger(), nullable=True),
+        sa.Column("unchanged_count", sa.BigInteger(), nullable=True),
+        sa.Column("validation_summary", JSONB(), nullable=True),
+        sa.Column("source_metadata", JSONB(), nullable=True),
+        sa.Column(
+            "staging_recovery_required",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
+        ),
         # Table-level constraints
+        sa.CheckConstraint(
+            "valid_count IS NULL OR valid_count >= 0",
+            name="ck_import_runs_valid_count_nonnegative",
+        ),
+        sa.CheckConstraint(
+            "unchanged_count IS NULL OR unchanged_count >= 0",
+            name="ck_import_runs_unchanged_count_nonnegative",
+        ),
         sa.PrimaryKeyConstraint(
             "id",
             name="pk_import_runs",
@@ -188,9 +202,7 @@ def downgrade() -> None:
         schema="etl",
     )
 
-    op.execute("DROP SCHEMA gold")
     op.execute("DROP SCHEMA silver")
-    op.execute("DROP SCHEMA bronze")
     op.execute("DROP SCHEMA staging")
     op.execute("DROP SCHEMA etl")
 

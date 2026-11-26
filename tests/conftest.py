@@ -69,7 +69,9 @@ def db_settings():
 def db(db_settings):
     with connect(db_settings) as conn:
         conn.execute("DROP TABLE IF EXISTS staging.mappluto_source")
-        conn.execute("TRUNCATE silver.tax_lots, etl.import_runs RESTART IDENTITY")
+        conn.execute(
+            "TRUNCATE silver.tax_lots, etl.import_runs RESTART IDENTITY"
+        )
         yield conn
 
 
@@ -164,7 +166,7 @@ def job_source(monkeypatch, db_settings):
             job, "inspect_mappluto", lambda *args: inspection_for(adjusted)
         )
 
-        def load(*args):
+        def load(*args, **kwargs):
             with connect(db_settings) as conn:
                 stage(conn, rows)
 

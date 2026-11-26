@@ -5,6 +5,9 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .env
+AGENTS.md
+docs/tasks
+tests/fixtures/mappluto/*
 # Source datasets and pipeline working data
 data/bronze/*
 data/working/*

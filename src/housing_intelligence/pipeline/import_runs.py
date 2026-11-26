@@ -153,6 +153,7 @@ def record_import_progress(conn: psycopg.Connection, run_id: int, **values) -> N
     """Update only measured run metadata; callers still own transactions."""
     allowed = {
         "checksum_sha256",
+        "source_metadata",
         "source_row_count",
         "staged_row_count",
         "valid_count",
@@ -165,7 +166,7 @@ def record_import_progress(conn: psycopg.Connection, run_id: int, **values) -> N
         sql.SQL("{} = %s").format(sql.Identifier(name)) for name in values
     )
     parameters = [
-        Jsonb(value) if name == "validation_summary" else value
+        Jsonb(value) if name in {"validation_summary", "source_metadata"} else value
         for name, value in values.items()
     ]
     result = conn.execute(

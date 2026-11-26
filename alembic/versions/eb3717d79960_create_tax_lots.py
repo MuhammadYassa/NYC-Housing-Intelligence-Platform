@@ -1,20 +1,20 @@
-"""create tax lots
+"""create tax lots.
 
 Revision ID: eb3717d79960
 Revises: b3a3a5836b80
 Create Date: 2026-08-02 14:23:19.463726
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 from geoalchemy2 import Geometry
 import sqlalchemy as sa
 
-
 # revision identifiers, used by Alembic.
-revision: str = 'eb3717d79960'
-down_revision: Union[str, Sequence[str], None] = 'b3a3a5836b80'
+revision: str = "eb3717d79960"
+down_revision: Union[str, Sequence[str], None] = "b3a3a5836b80"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -24,139 +24,47 @@ def upgrade() -> None:
     op.create_table(
         "tax_lots",
         # Property Identity Columns
-        sa.Column(
-            "bbl",
-            sa.Text(),
-            nullable = False
-        ),
-        sa.Column(
-            "borough_code",
-            sa.SmallInteger(),
-            nullable = False
-        ),
-        sa.Column(
-            "borough",
-            sa.Text(),
-            nullable = False
-        ),
-        sa.Column(
-            "tax_block",
-            sa.Integer(),
-            nullable = False
-        ),
-        sa.Column(
-            "tax_lot",
-            sa.Integer(),
-            nullable = False 
-        ),
-
+        sa.Column("bbl", sa.Text(), nullable=False),
+        sa.Column("borough_code", sa.SmallInteger(), nullable=False),
+        sa.Column("borough", sa.Text(), nullable=False),
+        sa.Column("tax_block", sa.Integer(), nullable=False),
+        sa.Column("tax_lot", sa.Integer(), nullable=False),
         # Display and Classification Columns
-        sa.Column(
-            "address",
-            sa.Text(),
-            nullable = True
-        ),
-        sa.Column(
-            "zip_code",
-            sa.Text(),
-            nullable = True
-        ),
-        sa.Column(
-            "community_district",
-            sa.SmallInteger(),
-            nullable = True
-        ),
-        sa.Column(
-            "building_class",
-            sa.Text(),
-            nullable = True
-        ),
-        sa.Column(
-            "land_use",
-            sa.Text(),
-            nullable = True
-        ),
-        sa.Column(
-            "owner_name",
-            sa.Text(),
-            nullable = True
-        ),
-
+        sa.Column("address", sa.Text(), nullable=True),
+        sa.Column("zip_code", sa.Text(), nullable=True),
+        sa.Column("community_district", sa.SmallInteger(), nullable=True),
+        sa.Column("building_class", sa.Text(), nullable=True),
+        sa.Column("land_use", sa.Text(), nullable=True),
+        sa.Column("owner_name", sa.Text(), nullable=True),
         # Property Characteristics Columns
-        sa.Column(
-            "lot_area_sqft",
-            sa.BigInteger(),
-            nullable = True
-        ),
-        sa.Column(
-            "building_area_sqft",
-            sa.BigInteger(),
-            nullable = True
-        ),
-        sa.Column(
-            "number_of_buildings",
-            sa.Integer(),
-            nullable = True
-        ),
-        sa.Column(
-            "number_of_floors",
-            sa.Numeric(6, 2),
-            nullable = True
-        ),
-        sa.Column(
-            "residential_units",
-            sa.Integer(),
-            nullable = True
-        ),
-        sa.Column(
-            "total_units",
-            sa.Integer(),
-            nullable = True
-        ),
-        sa.Column(
-            "year_built",
-            sa.SmallInteger(),
-            nullable = True
-        ),
-
+        sa.Column("lot_area_sqft", sa.BigInteger(), nullable=True),
+        sa.Column("building_area_sqft", sa.BigInteger(), nullable=True),
+        sa.Column("number_of_buildings", sa.Integer(), nullable=True),
+        sa.Column("number_of_floors", sa.Numeric(6, 2), nullable=True),
+        sa.Column("residential_units", sa.Integer(), nullable=True),
+        sa.Column("total_units", sa.Integer(), nullable=True),
+        sa.Column("year_built", sa.SmallInteger(), nullable=True),
         # Geography Columns
-        sa.Column(
-            "latitude",
-            sa.Double(),
-            nullable = True
-        ),
-        sa.Column(
-            "longitude",
-            sa.Double(),
-            nullable = True
-        ),
+        sa.Column("latitude", sa.Double(), nullable=True),
+        sa.Column("longitude", sa.Double(), nullable=True),
         sa.Column(
             "geom",
-            Geometry(
-                geometry_type = "MULTIPOLYGON",
-                srid = 2263, 
-                spatial_index = False
-            ),
-            nullable = False
+            Geometry(geometry_type="MULTIPOLYGON", srid=2263, spatial_index=False),
+            nullable=False,
         ),
-
         # Lineage Columns
-        sa.Column(
-            "pluto_version",
-            sa.Text(),
-            nullable = False
-        ),
+        sa.Column("pluto_version", sa.Text(), nullable=False),
         sa.Column(
             "ingested_at",
-            sa.DateTime(timezone = True),
-            nullable = False,
-            server_default = sa.text("CURRENT_TIMESTAMP") 
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "updated_at",
-            sa.DateTime(timezone = True),
-            nullable = False,
-            server_default = sa.text("CURRENT_TIMESTAMP") 
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
         ),
         sa.Column(
             "source_import_run_id",
@@ -168,14 +76,8 @@ def upgrade() -> None:
             ),
             nullable=False,
         ),
-        sa.PrimaryKeyConstraint(
-            "bbl",
-            name = "pk_tax_lots"
-        ),
-        sa.CheckConstraint(
-            "bbl ~ '^[1-5][0-9]{9}$'",
-            name = "ck_tax_lots_bbl_format"
-        ),
+        sa.PrimaryKeyConstraint("bbl", name="pk_tax_lots"),
+        sa.CheckConstraint("bbl ~ '^[1-5][0-9]{9}$'", name="ck_tax_lots_bbl_format"),
         sa.CheckConstraint(
             """
             bbl =
@@ -186,8 +88,7 @@ def upgrade() -> None:
             name="ck_tax_lots_bbl_components_match",
         ),
         sa.CheckConstraint(
-            "borough_code BETWEEN 1 AND 5",
-            name = "ck_tax_lots_borough_code"
+            "borough_code BETWEEN 1 AND 5", name="ck_tax_lots_borough_code"
         ),
         sa.CheckConstraint(
             """
@@ -199,7 +100,7 @@ def upgrade() -> None:
                 'SI'
             )
             """,
-            name = "ck_tax_lots_borough"
+            name="ck_tax_lots_borough",
         ),
         sa.CheckConstraint(
             """
@@ -245,7 +146,7 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "char_length(btrim(pluto_version)) > 0",
-            name = "ck_tax_lots_pluto_version_not_blank"
+            name="ck_tax_lots_pluto_version_not_blank",
         ),
         sa.CheckConstraint(
             "year_built IS NULL OR year_built BETWEEN 1624 AND 2100",
@@ -259,24 +160,24 @@ def upgrade() -> None:
             "longitude IS NULL OR longitude BETWEEN -180 AND 180",
             name="ck_tax_lots_longitude_range",
         ),
-        schema = "silver"
+        schema="silver",
     )
 
     op.create_index(
         "ix_tax_lots_geom",
         "tax_lots",
         ["geom"],
-        unique = False,
-        postgresql_using = "GIST",
-        schema = "silver"
+        unique=False,
+        postgresql_using="GIST",
+        schema="silver",
     )
 
     op.create_index(
         "ix_tax_lots_source_import_run_id",
         "tax_lots",
         ["source_import_run_id"],
-        unique = False,
-        schema = "silver"
+        unique=False,
+        schema="silver",
     )
     pass
 

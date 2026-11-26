@@ -1,0 +1,5 @@
+# Example user crontab. DO NOT INSTALL until database initialization, host checks, and a supervised run.
+# Set the two count-change threshold environment variables in the host configuration.
+# Run from the app root for .env resolution; credentials never go in this file.
+# Host local time: daily at 04:15. Provision and rotate this log separately.
+15 4 * * * cd /opt/nyc-housing-intelligence && /opt/nyc-housing-intelligence/.venv/bin/python -m housing_intelligence.pipeline.mappluto.automation >> /var/log/nyc-housing-intelligence/mappluto.log 2>&1

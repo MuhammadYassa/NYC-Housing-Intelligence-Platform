@@ -34,7 +34,7 @@ def run(archive, contract, db_settings, tmp_path):
 def test_migration_bootstrap(db):
     assert (
         db.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        == "4e2c9f713a60"
+        == "eb3717d79960"
     )
     assert db.execute("SELECT postgis_version()").fetchone()[0]
     assert (
@@ -183,8 +183,8 @@ def test_failed_job_is_durable_and_canonical_is_atomic(
     )
     if failure == "gdal":
 
-        def fail(*args):
-            raise RuntimeError("GDAL failed")
+        def fail(*args, **kwargs):
+            raise job.OperationalError("GDAL failed")
 
         monkeypatch.setattr(job, "load_to_staging", fail)
     if failure == "after_merge":
@@ -257,13 +257,13 @@ def test_competing_job_cannot_overwrite_staging(
     assert db.execute("SELECT count(*) FROM etl.import_runs").fetchone()[0] == 0
 
 
-def test_interrupted_run_recovered_without_rewriting_old_runs(
+def test_interrupted_run_recovered_without_touching_other_datasets(
     db, db_settings, job_source, archive, contract, tmp_path
 ):
     interrupted = create_import_run(
         db, "MapPLUTO", job.PIPELINE_VERSION, "26v1", archive, None
     )
-    legacy = create_import_run(db, "MapPLUTO", "legacy-manual", "26v1", archive, None)
+    other = create_import_run(db, "OtherDataset", "test", "1", archive, None)
     contract = job_source([lot()], contract)
     run(archive, contract, db_settings, tmp_path)
     assert (
@@ -274,7 +274,7 @@ def test_interrupted_run_recovered_without_rewriting_old_runs(
     )
     assert (
         db.execute(
-            "SELECT status FROM etl.import_runs WHERE id=%s", (legacy,)
+            "SELECT status FROM etl.import_runs WHERE id=%s", (other,)
         ).fetchone()[0]
         == "STARTED"
     )

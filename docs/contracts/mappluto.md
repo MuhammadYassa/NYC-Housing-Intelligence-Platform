@@ -1,12 +1,9 @@
-# MapPLUTO 26v1 ingestion contract
+# MapPLUTO ingestion contract
 
-Executable release metadata lives in
-`src/housing_intelligence/pipeline/mappluto/source.py`. Only reviewed releases
-are accepted. 26v1 expects `MapPLUTO_26v1_clipped`, OpenFileGDB, 856,614 source
-features, and two-dimensional Polygon/MultiPolygon geometry in EPSG:2263.
-This count is a release-specific completeness expectation, not a hardcoded
-measurement: each run records inspection and database counts independently.
-Future releases require a reviewed descriptor rather than reusing this count.
+Automation workflow now constructs runtime descriptors
+for newly discovered official archives. It retains the independent field,
+identity, geometry, and CRS requirements below, and compares actual source/staged
+counts and prior successful total/borough counts before promotion.
 
 All fields below must exist with the documented source numeric/string types.
 Staging preserves source `objectid`; canonical identity is BBL, not objectid.
@@ -21,7 +18,8 @@ Staging preserves source `objectid`; canonical identity is BBL, not objectid.
 - Geometry must be present, nonempty, valid, two-dimensional, polygonal, and
   SRID 2263. Polygons are promoted to MultiPolygon without changing CRS.
 - Every row's trimmed version must match the selected release. Source/staging
-  counts must equal the reviewed expectation, and zero-row snapshots fail.
+  counts must equal the reviewed expectation for manual imports or the inspected
+  source count for runtime contracts, and zero-row snapshots fail.
 - Areas and counts must be nonnegative and fit target types; floors must fit
   numeric(6,2). Coordinates must fit latitude/longitude ranges. Non-null ZIP
   codes must be zero or five-digit values; community district must fit smallint.
@@ -47,7 +45,10 @@ retain `ingested_at` and replace `updated_at`/`source_import_run_id`; new rows s
 both timestamps and their source run. Lots missing from a snapshot are untouched.
 
 The input archive, checksum, release, and import run provide source provenance.
-No generalized lot history is implemented. Keep prior archives available before
+Successful imports save total and borough counts in `validation_summary.snapshot`;
+automation compares these counts before promotion. Exact BBL membership and
+overlap checks are not maintained. All row-level integrity checks above remain.
+No generalized attribute or geometry history is implemented. Keep prior archives available before
 using the merge for later source corrections/releases.
 
 ## Field mapping

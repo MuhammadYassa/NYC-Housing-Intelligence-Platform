@@ -23,7 +23,9 @@ class ValidationError(ValueError):
 def validate_staging(
     conn, contract: SourceContract, source_count: int
 ) -> ValidationResult:
-    received = conn.execute("SELECT count(*) FROM staging.mappluto_source").fetchone()[0]
+    received = conn.execute("SELECT count(*) FROM staging.mappluto_source").fetchone()[
+        0
+    ]
     fields = dict(
         conn.execute(
             """SELECT column_name, udt_name FROM information_schema.columns
